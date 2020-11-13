@@ -1,6 +1,6 @@
 #-------------------------------------------------------------------------
 #
-#  Copyright (c) 2018-2020 Rajit Manohar
+#  Copyright (c) 2018 Rajit Manohar
 #
 #  This program is free software; you can redistribute it and/or
 #  modify it under the terms of the GNU General Public License
@@ -18,25 +18,13 @@
 #  Boston, MA  02110-1301, USA.
 #
 #-------------------------------------------------------------------------
-TARGETLIBS=libactpass_$(EXT).a
-TARGETINCS=passes.h
-TARGETINCSUBDIR=act
-SUBDIRS=flatten netgen cells layout booleanize state sizing
+EXTRA=layout.o 
+TARGETINCS=layout.h
+TARGETINCSUBDIR=act/passes
 
-USEOBJS=booleanize/$(EXT)/booleanize.o \
-	netgen/$(EXT)/netlist.o \
-	netgen/$(EXT)/emit.o \
-	flatten/$(EXT)/flatten.o \
-	cells/$(EXT)/cells.o \
-	layout/$(EXT)/layout.o \
-	state/$(EXT)/statepass.o \
-	sizing/$(EXT)/sizing.o
-
+SRCS=$(EXTRA:.o=.cc)
+OBJS=$(EXTRA)
 
 include $(VLSI_TOOLS_SRC)/scripts/Makefile.std
-
-$(TARGETLIBS): $(USEOBJS)
-	ar ruv $(TARGETLIBS) $(USEOBJS)
-	$(RANLIB) $(TARGETLIBS)
 
 -include Makefile.deps
