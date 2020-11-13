@@ -21,17 +21,47 @@
  *
  **************************************************************************
  */
-#ifndef __ACT_PASSES_H__
-#define __ACT_PASSES_H__
-
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
 #include <act/act.h>
-#include <act/passes/aflat.h>
-#include <act/passes/booleanize.h>
-#include <act/passes/netlist.h>
-#include <act/passes/cells.h>
+#include <act/passes.h>
 #include <act/passes/layout.h>
-#include <act/passes/statepass.h>
-#include <act/passes/sizing.h>
+#include "config.h"
 
 
-#endif /* __ACT_PASSES_H__ */
+static void usage (char *name)
+{
+  fprintf (stderr, "Usage: %s [act-options] <actfile> <celldir>\n", name);
+  exit (1);
+}
+
+
+int main (int argc, char **argv)
+{
+  Act *a;
+  char *proc;
+  FILE *fp;
+
+  Act::Init (&argc, &argv);
+
+  if (argc != 3) {
+    usage (argv[0]);
+  }
+
+  a = new Act (argv[1]);
+  a->Expand ();
+  /* for each expanded ACT process, read in cells */
+
+  /* for each ACT process, find production rules and try and match
+     to cells */
+
+  ActLayoutPass *cp = new ActLayoutPass (a);
+  cp->run();
+
+  //cp->Print (stdout);
+
+  //a->Print (stdout);
+
+  return 0;
+}
