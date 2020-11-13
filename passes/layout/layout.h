@@ -84,7 +84,7 @@ public:
 private:
   void *local_op (Process *p, int mode = 0);
   void free_local (void *);
-  
+
 	void extract_devices(act_cell_t *c, act_prs_expr_t *e, act_size_spec_t **sz, act_dev_group_t group, unsigned char type = ACT_NMOS);
 	void extract_stack(act_prs_lang_t *lang, act_cell_t *c);
 	act_cell_t *extract_cell(Process *p);

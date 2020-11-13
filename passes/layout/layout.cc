@@ -123,7 +123,7 @@ void ActLayoutPass::extract_devices(act_cell_t *c, act_prs_expr_t *e, act_size_s
 		}
 
 		A_NEW(c->devs, act_dev_t);
-		A_NEXT(c->devs) = act_dev_t(type, node, group, *sz);
+		A_NEXT(c->devs) = act_dev_t(type, node, group, e->u.v.sz);
 		A_INC(c->devs);
     break;
     
@@ -143,7 +143,7 @@ void ActLayoutPass::extract_stack(act_prs_lang_t *lang, act_cell_t *c)
 {
 	if (lang->type == ACT_PRS_RULE)
 	{
-		act_size_spec_t *sz;
+		act_size_spec_t *sz = NULL;
 		act_dev_group group(lang->u.one.dir, c->netId(lang->u.one.id));
 		if (group.drain >= A_LEN(c->nets)) {
 			A_NEW(c->nets, ActId*);
@@ -242,7 +242,24 @@ act_cell_t *ActLayoutPass::extract_cell(Process *p)
 
 			printf ("CELL: %s\n", p->getName());
 			for (int i = 0; i < A_LEN(c->devs); i++) {
-				printf("%s g:%d s:%d d:%d\n", c->devs[i].type == ACT_NMOS ? "nmos" : "pmos", c->devs[i].gate, c->devs[i].source, c->devs[i].drain);
+				printf("%s g:%d s:%d d:%d", c->devs[i].type == ACT_NMOS ? "nmos" : "pmos", c->devs[i].gate, c->devs[i].source, c->devs[i].drain);
+				if (c->devs[i].size == NULL) {
+					printf(" w,l:null");
+				} else {
+					if (c->devs[i].size->w == NULL or c->devs[i].size->w->type != E_INT) {
+						printf(" w:<e>");
+					} else {
+						printf(" w:%u", c->devs[i].size->w->u.v);
+					}
+					
+					if (c->devs[i].size->l == NULL or c->devs[i].size->l->type != E_INT) {
+						printf(" l:<e>");
+					} else {
+						printf(" l:%u", c->devs[i].size->l->u.v);
+					}
+				}
+				printf("\n");
+
 			}
 		}
 
