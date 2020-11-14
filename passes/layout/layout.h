@@ -52,19 +52,34 @@ typedef struct net
 	A_DECL(act_coord_t, act_coords);
 } net_t;
 
+typedef struct act_gate
+{
+	act_gate();
+	act_gate(unsigned int net, unsigned int width, unsigned int length);
+	~act_gate();
+
+	unsigned int net;
+	unsigned int width;
+	unsigned int length;
+} act_gate_t;
+
 typedef struct act_dev
 {
 	act_dev(unsigned int gate, unsigned int source, unsigned int drain, unsigned int bulk, unsigned int width, unsigned int length);
 	~act_dev();
 
-	unsigned int gate;
+	A_DECL(act_gate_t, gate);
 	unsigned int source;
 	unsigned int drain;
 	unsigned int bulk;
-
-	unsigned int width;
-	unsigned int length;
 } act_dev_t;
+
+typedef struct act_col
+{
+	unsigned int x;
+	unsigned int net;
+	unsigned int col;
+} act_col_t;
 
 typedef struct layout_task
 {
@@ -75,9 +90,8 @@ typedef struct layout_task
 	A_DECL(act_dev_t, nmos);
 	A_DECL(net_t, nets);
 
-	A_DECL(act_coord_t, top);
-	A_DECL(act_coord_t, bot);
-
+	A_DECL(act_col_t, top);
+	A_DECL(act_col_t, bot);
 } layout_task_t;
 
 class ActLayoutPass : public ActPass {
@@ -96,6 +110,7 @@ private:
 	int p_fold;
 	int discrete_len;
 
+	void collect_stacks(layout_task *task);
 	void process_cell(Process *p);
 };
 
