@@ -32,63 +32,71 @@
 #include "bitset.h"
 #include "array.h"
 
-typedef struct act_dev_group
+#include <act/passes/netlist.h>
+
+typedef struct act_coord
 {
-	act_dev_group();
-	act_dev_group(unsigned int source, unsigned int drain);
-	~act_dev_group();
+	act_coord();
+	act_coord(unsigned int x, unsigned int y);
+	~act_coord();
 
-	unsigned int source;
-	unsigned int drain;
-} act_dev_group_t;
+	unsigned int x, y;
+} act_coord_t;
 
-enum act_dev_type {
-	ACT_NMOS = 0,
-	ACT_PMOS = 1
-};
+typedef struct net
+{
+	net();
+	~net();
+
+	node_t *node;
+	A_DECL(act_coord_t, act_coords);
+} net_t;
 
 typedef struct act_dev
 {
-	act_dev();
-	act_dev(unsigned int type, unsigned int gate, act_dev_group_t group, act_size_spec_t *size);
+	act_dev(unsigned int gate, unsigned int source, unsigned int drain, unsigned int bulk, unsigned int width, unsigned int length);
 	~act_dev();
 
-	unsigned char type;
 	unsigned int gate;
 	unsigned int source;
 	unsigned int drain;
-	act_size_spec_t *size;
+	unsigned int bulk;
+
+	unsigned int width;
+	unsigned int length;
 } act_dev_t;
 
-typedef struct act_cell
+typedef struct layout_task
 {
-	act_cell();
-	~act_cell();
+	layout_task();
+	~layout_task();
 
-	Process *p;
-	A_DECL(ActId*, nets);
-	A_DECL(act_dev_t, devs);
-	
-	unsigned int netId(ActId *name);
-} act_cell_t;
+	A_DECL(act_dev_t, pmos);
+	A_DECL(act_dev_t, nmos);
+	A_DECL(net_t, nets);
+
+	A_DECL(act_coord_t, top);
+	A_DECL(act_coord_t, bot);
+
+} layout_task_t;
 
 class ActLayoutPass : public ActPass {
 public:
   ActLayoutPass (Act *a);
   ~ActLayoutPass ();
 
-  int run (Process *p = NULL);
-
-  void Print (FILE *fp);
-
 private:
   void *local_op (Process *p, int mode = 0);
   void free_local (void *);
 
-	void extract_devices(act_cell_t *c, act_prs_expr_t *e, act_size_spec_t **sz, act_dev_group_t group, unsigned char type = ACT_NMOS);
-	void extract_stack(act_prs_lang_t *lang, act_cell_t *c);
-	act_cell_t *extract_cell(Process *p);
-	void collect_cells(Process *p);
+	ActNetlistPass *np;
+
+	double lambda;
+	int n_fold;
+	int p_fold;
+	int discrete_len;
+
+	void process_cell(Process *p);
 };
 
 
