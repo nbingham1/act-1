@@ -144,6 +144,15 @@
      A_INC (name);				\
    } while (0)
 
+#define A_DELETE(name,i) \
+	do { \
+		A_LEN(name) -= 1; \
+		int x; \
+		for (x = i; x < A_LEN(name); x++) { \
+			name[x] = name[x+1]; \
+		} \
+	} while (0);
+
 #define A_FREE(name)  do { if (A_MAX(name) > 0) FREE (name); A_INIT (name); } while (0)
 
 #endif /* __ARRAY_H__ */

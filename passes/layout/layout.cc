@@ -58,18 +58,36 @@ net::~net()
 	A_FREE(act_coords);
 }
 
-act_dev::act_dev(unsigned int gate, unsigned int source, unsigned int drain, unsigned int bulk, unsigned int width, unsigned int length)
+act_gate::act_gate()
 {
-	this->gate = gate;
-	this->source = source;
-	this->drain = drain;
-	this->bulk = bulk;
+}
+
+act_gate::act_gate(unsigned int net, unsigned int width, unsigned int length)
+{
+	this->net = net;
 	this->width = width;
 	this->length = length;
 }
 
+act_gate::~act_gate()
+{
+}
+
+
+act_dev::act_dev(unsigned int gate, unsigned int source, unsigned int drain, unsigned int bulk, unsigned int width, unsigned int length)
+{
+	A_INIT(this->gate);
+	A_NEW(this->gate, act_gate_t);
+	A_NEXT(this->gate) = act_gate_t(gate, width, length);
+	A_INC(this->gate);
+	this->source = source;
+	this->drain = drain;
+	this->bulk = bulk;
+}
+
 act_dev::~act_dev()
 {
+	A_FREE(this->gate);
 }
 
 layout_task::layout_task()
@@ -86,8 +104,80 @@ layout_task::~layout_task()
 	A_FREE(nets);
 }
 
+void ActLayoutPass::collect_stacks(layout_task *task)
+{
+	A_DECL(unsigned int, count);
+	A_NEWP(count, unsigned int, A_LEN(task->nets));
+	
+	for (int i = 0; i < A_LEN(task->nets); i++) {
+		A_NEXT(count) = 0;
+		A_INC(count);
+	}
+
+	for (int i = 0; i < A_LEN(task->pmos); i++) {
+		count[task->pmos[i].source] += 1;
+		count[task->pmos[i].drain] += 1;
+	}
+
+	for (int i = 0; i < A_LEN(task->nmos); i++) {
+		printf("%d,%d/%d\n", task->nmos[i].source, task->nmos[i].drain, A_LEN(count));
+		count[task->nmos[i].source] += 1;
+		count[task->nmos[i].drain] += 1;
+	}
+
+	for (int i = 0; i < A_LEN(task->pmos); i++) {
+		for (int j = A_LEN(task->pmos)-1; j > i; j--) {
+			if (task->pmos[i].drain == task->pmos[j].source and count[task->pmos[i].drain] == 2) {
+				A_NEWP(task->pmos[i].gate, act_gate_t, A_LEN(task->pmos[j].gate));
+				for (int k = 0; k < A_LEN(task->pmos[j].gate); k++) {
+					A_NEXT(task->pmos[i].gate) = task->pmos[j].gate[k];
+					A_INC(task->pmos[i].gate);
+				}
+				task->pmos[i].drain = task->pmos[j].drain;
+				A_DELETE(task->pmos,j);
+			} else if (task->pmos[i].source == task->pmos[j].drain and count[task->pmos[i].source] == 2) {
+				A_NEWP(task->pmos[j].gate, act_gate_t, A_LEN(task->pmos[i].gate));
+				for (int k = 0; k < A_LEN(task->pmos[i].gate); k++) {
+					A_NEXT(task->pmos[j].gate) = task->pmos[i].gate[k];
+					A_INC(task->pmos[j].gate);
+				}
+				A_ASSIGN(task->pmos[i].gate, task->pmos[j].gate);
+				task->pmos[i].source = task->pmos[j].source;
+				A_DELETE(task->pmos,j);
+			}
+		}
+	}
+
+	for (int i = 0; i < A_LEN(task->nmos); i++) {
+		for (int j = A_LEN(task->nmos)-1; j > i; j--) {
+			if (task->nmos[i].drain == task->nmos[j].source and count[task->nmos[i].drain] == 2) {
+				A_NEWP(task->nmos[i].gate, act_gate_t, A_LEN(task->nmos[j].gate));
+				for (int k = 0; k < A_LEN(task->nmos[j].gate); k++) {
+					A_NEXT(task->nmos[i].gate) = task->nmos[j].gate[k];
+					A_INC(task->nmos[i].gate);
+				}
+				task->nmos[i].drain = task->nmos[j].drain;
+				A_DELETE(task->nmos,j);
+			} else if (task->nmos[i].source == task->nmos[j].drain and count[task->nmos[i].source] == 2) {
+				A_NEWP(task->nmos[j].gate, act_gate_t, A_LEN(task->nmos[i].gate));
+				for (int k = 0; k < A_LEN(task->nmos[i].gate); k++) {
+					A_NEXT(task->nmos[j].gate) = task->nmos[i].gate[k];
+					A_INC(task->nmos[j].gate);
+				}
+				A_ASSIGN(task->nmos[i].gate, task->nmos[j].gate);
+				task->nmos[i].source = task->nmos[j].source;
+				A_DELETE(task->nmos,j);
+			}
+		}
+	}
+}
+
 void ActLayoutPass::process_cell(Process *p)
 {
+	if (!p->isExpanded()) {
+		fatal_error ("Process has not been expanded.");
+	}
+
 	netlist_t *n = np->getNL(p);
 	if (n == NULL) {
 		fatal_error ("Process has not been netlisted.");
@@ -104,6 +194,10 @@ void ActLayoutPass::process_cell(Process *p)
 	max_net_id += 1;
 
 	A_NEWP(task.nets,net_t,max_net_id);
+	for (int i = 0; i < max_net_id; i++) {
+		A_NEXT(task.nets) = net_t();
+		A_INC(task.nets);
+	}
 
 	printf("max_net_id: %d\n", max_net_id);
 
@@ -156,11 +250,11 @@ void ActLayoutPass::process_cell(Process *p)
 
 					if (e->type == 0) {
 						A_NEW(task.nmos, act_dev_t);
-						A_NEXT(task.nmos) = act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
+						new (&A_NEXT(task.nmos)) act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
 						A_INC(task.nmos);
 					} else {
 						A_NEW(task.pmos, act_dev_t);
-						A_NEXT(task.pmos) = act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
+						new (&A_NEXT(task.pmos)) act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
 						A_INC(task.pmos);
 					}
 				}
@@ -176,6 +270,15 @@ void ActLayoutPass::process_cell(Process *p)
     }
   }
 
+	// TODO: figure out the stack ordering
+	// TODO: route above and below the stacks
+	// TODO: route the channel
+	// TODO: parse the DRC rule files
+	// TODO: add the DRC constraints into the routers
+
+	
+	collect_stacks(&task);
+
 	char buf[1000];
 	for (int i = 0; i < A_LEN(task.nets); i++) {
 		if (task.nets[i].node != NULL and task.nets[i].node->v != NULL) {
@@ -188,23 +291,24 @@ void ActLayoutPass::process_cell(Process *p)
 	}
 
 	for (int i = 0; i < A_LEN(task.pmos); i++) {
-		printf("pmos g:%d s:%d d:%d b:%d w:%d l:%d\n", task.pmos[i].gate, task.pmos[i].source, task.pmos[i].drain, task.pmos[i].bulk, task.pmos[i].width, task.pmos[i].length);
+		printf("pmos b:%d s:%d\n", task.pmos[i].bulk, task.pmos[i].source);
+		for (int j = 0; j < A_LEN(task.pmos[i].gate); j++)
+			printf("  g:%d w:%d l:%d\n", task.pmos[i].gate[j].net, task.pmos[i].gate[j].width, task.pmos[i].gate[j].length);
+		printf("  d:%d\n", task.pmos[i].drain);
 	}
 
 	for (int i = 0; i < A_LEN(task.nmos); i++) {
-		printf("nmos g:%d s:%d d:%d b:%d w:%d l:%d\n", task.nmos[i].gate, task.nmos[i].source, task.nmos[i].drain, task.nmos[i].bulk, task.nmos[i].width, task.nmos[i].length);
+		printf("nmos b:%d s:%d\n", task.nmos[i].bulk, task.nmos[i].source);
+		for (int j = 0; j < A_LEN(task.nmos[i].gate); j++)
+			printf("  g:%d w:%d l:%d\n", task.nmos[i].gate[j].net, task.nmos[i].gate[j].width, task.nmos[i].gate[j].length);
+		printf("  d:%d\n", task.nmos[i].drain);
 	}
-
 }
 
 void *ActLayoutPass::local_op (Process *p, int mode)
 {
 	if (p and p->isCell()) {
-		if (p->isExpanded()) {
-			process_cell(p);
-		} else {
-			fatal_error ("Process has not been expanded.");
-		}
+		process_cell(p);
 	}
 	return NULL;
 }
