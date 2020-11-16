@@ -18,8 +18,8 @@
 #  Boston, MA  02110-1301, USA.
 #
 #-------------------------------------------------------------------------
-EXTRA=layout.o 
-TARGETINCS=layout.h
+EXTRA=layout.o color_graph.o
+TARGETINCS=layout.h color_graph.h
 TARGETINCSUBDIR=act/passes
 
 SRCS=$(EXTRA:.o=.cc)

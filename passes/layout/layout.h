@@ -21,18 +21,19 @@
  *
  **************************************************************************
  */
-#ifndef __ACT_PASS_LAYOUT_H__
-#define __ACT_PASS_LAYOUT_H__
 
-#include <set>
-#include <map>
+#pragma once
+
 #include <act/act.h>
 #include <act/iter.h>
 #include "hash.h"
 #include "bitset.h"
 #include "array.h"
+#include "color_graph.h"
 
 #include <act/passes/netlist.h>
+
+struct layout_task;
 
 typedef struct act_coord
 {
@@ -49,7 +50,10 @@ typedef struct net
 	~net();
 
 	node_t *node;
-	A_DECL(act_coord_t, act_coords);
+
+	// the total number of ports for this net in the cell
+	// a port is a connection of the net to the source, drain, or gate of a transistor
+	unsigned int ports;
 } net_t;
 
 typedef struct act_gate
@@ -58,7 +62,11 @@ typedef struct act_gate
 	act_gate(unsigned int net, unsigned int width, unsigned int length);
 	~act_gate();
 
+	// the id of the net for this gate
+	// this indexes into task->nets or task->stack[i].ovr
 	unsigned int net;
+
+	// transistor dimensions
 	unsigned int width;
 	unsigned int length;
 } act_gate_t;
@@ -69,29 +77,107 @@ typedef struct act_dev
 	~act_dev();
 
 	A_DECL(act_gate_t, gate);
+	// the id of the net for this stack
+	// this indexes into task->nets or task->stack[i].ovr
 	unsigned int source;
 	unsigned int drain;
 	unsigned int bulk;
+
+	// whether or not this stack has been placed in the layout problem
+	unsigned int selected:1;
 } act_dev_t;
+
+typedef struct act_dev_sel
+{
+	act_dev_sel();
+	act_dev_sel(unsigned int idx, unsigned int flip);
+	~act_dev_sel();
+
+	// the device stack stack index
+	unsigned int idx;
+
+	// unflipped is source on left, drain on right. Flipped is drain on left,
+	// source on right.
+	unsigned int flip:1;
+} act_dev_sel_t;
 
 typedef struct act_col
 {
-	unsigned int x;
+	act_col();
+	act_col(unsigned int pos, unsigned int net, unsigned int idx);
+	~act_col();
+
+	// position in layout of this column (columns aren't uniformly spaced)
+	unsigned int pos;
+
+	// the net connected to this port
+	// this indexes into task->nets or task->stack[i].ovr
 	unsigned int net;
-	unsigned int col;
+
+	// the index of this port for this net.
+	unsigned int idx;
 } act_col_t;
+
+typedef struct act_rect
+{
+	unsigned int left;
+	unsigned int right;
+	unsigned int bottom;
+	unsigned int top;
+	unsigned int layer;
+} act_rect_t;
+
+
+typedef struct act_ovr
+{
+	act_ovr();
+	~act_ovr();
+
+	// the number of ports this net has within this stack
+	int ports;
+
+	// the latest port id that was routed
+	int idx;
+} act_ovr_t;
+
+typedef struct act_stack
+{
+	act_stack();
+	~act_stack();
+
+	A_DECL(act_dev_t, mos);
+	A_DECL(act_dev_sel_t, sel);
+	A_DECL(act_col_t, col);
+	A_DECL(act_ovr_t, ovr);
+	color_graph_t layer;
+
+	unsigned int stage[2];
+
+	void init(unsigned int nets);
+
+	void stash();
+	void commit();
+	void clear();
+	void reset();
+
+	void print(const char *dev);
+	void count_ports();
+	void collect(layout_task *task);
+	void stage_mos(int net);
+	void stage_stack(int sel, int flip);
+} act_stack_t;
 
 typedef struct layout_task
 {
 	layout_task();
 	~layout_task();
 
-	A_DECL(act_dev_t, pmos);
-	A_DECL(act_dev_t, nmos);
+	act_stack_t stack[2];
 	A_DECL(net_t, nets);
 
-	A_DECL(act_col_t, top);
-	A_DECL(act_col_t, bot);
+	void stage_section(int psel, int pflip, int nsel, int nflip);
+	
+	A_DECL(act_rect_t, geo);
 } layout_task_t;
 
 class ActLayoutPass : public ActPass {
@@ -114,5 +200,3 @@ private:
 	void process_cell(Process *p);
 };
 
-
-#endif /* __ACT_PASS_LAYOUT_H__ */

@@ -50,12 +50,11 @@ act_coord::~act_coord()
 net::net()
 {
 	node = NULL;
-	A_INIT(act_coords);
+	ports = 0;
 }
 
 net::~net()
 {
-	A_FREE(act_coords);
 }
 
 act_gate::act_gate()
@@ -83,6 +82,8 @@ act_dev::act_dev(unsigned int gate, unsigned int source, unsigned int drain, uns
 	this->source = source;
 	this->drain = drain;
 	this->bulk = bulk;
+
+	this->selected = 0;
 }
 
 act_dev::~act_dev()
@@ -90,86 +91,274 @@ act_dev::~act_dev()
 	A_FREE(this->gate);
 }
 
+act_dev_sel::act_dev_sel()
+{
+	idx = 0;
+	flip = 0;
+}
+
+act_dev_sel::act_dev_sel(unsigned int idx, unsigned int flip)
+{
+	this->idx = idx;
+	this->flip = flip;
+}
+
+act_dev_sel::~act_dev_sel()
+{
+}
+
+act_col::act_col()
+{
+	this->pos = 0;
+	this->net = 0;
+	this->idx = 0;
+}
+
+act_col::act_col(unsigned int pos, unsigned int net, unsigned int idx)
+{
+	this->pos = pos;
+	this->net = net;
+	this->idx = idx;
+}
+
+act_col::~act_col()
+{
+}
+
+
+act_ovr::act_ovr()
+{
+	ports = 0;
+	idx = -1;
+}
+
+act_ovr::~act_ovr()
+{
+}
+
+act_stack::act_stack()
+{
+	A_INIT(mos);
+	A_INIT(sel);
+	A_INIT(col);
+	A_INIT(ovr);
+	stage[0] = 0;
+	stage[1] = 0;
+}
+
+act_stack::~act_stack()
+{
+	A_FREE(mos);
+	A_FREE(sel);
+	A_FREE(col);
+	A_FREE(ovr);
+}
+
+void act_stack::init(unsigned int nets)
+{
+	A_NEWP(ovr, act_ovr_t, nets);
+	for (int i = 0; i < nets; i++) {
+		A_NEXT(ovr) = act_ovr();
+		A_INC(ovr);
+	}
+	layer.init(nets);
+}
+
+void act_stack::stash()
+{
+	A_DELETE(col, stage[0], stage[1] - stage[0]);
+	stage[1] = A_LEN(col);
+	layer.stash();
+}
+
+void act_stack::commit()
+{
+	A_DELETE(col, stage[1], A_LEN(col) - stage[1]);
+	stage[0] = A_LEN(col);
+	stage[1] = A_LEN(col);
+	layer.commit();
+}
+
+void act_stack::clear()
+{
+	A_LEN(col) = stage[1];
+	layer.clear();
+}
+
+void act_stack::reset()
+{
+	A_LEN(col) = stage[0];
+	stage[1] = stage[0];
+	layer.reset();
+}
+
+void act_stack::print(const char *dev)
+{
+	for (int i = 0; i < A_LEN(mos); i++) {
+		printf("%s b:%d s:%d\n", dev, mos[i].bulk, mos[i].source);
+		for (int j = 0; j < A_LEN(mos[i].gate); j++)
+			printf("  g:%d w:%d l:%d\n", mos[i].gate[j].net, mos[i].gate[j].width, mos[i].gate[j].length);
+		printf("  d:%d\n", mos[i].drain);
+	}
+}
+
+void act_stack::count_ports()
+{
+	for (int i = 0; i < A_LEN(mos); i++) {
+		ovr[mos[i].source].ports += 1;
+		ovr[mos[i].drain].ports += 1;
+		for (int j = 0; j < A_LEN(mos[i].gate); j++) {
+			ovr[mos[i].gate[j].net].ports += 1;
+		}
+	}
+}
+
+void act_stack::collect(layout_task *task)
+{
+	for (int i = 0; i < A_LEN(mos); i++) {
+		for (int j = A_LEN(mos)-1; j > i; j--) {
+			if (mos[i].drain == mos[j].source and task->nets[mos[i].drain].ports == 2) {
+				A_NEWP(mos[i].gate, act_gate_t, A_LEN(mos[j].gate));
+				for (int k = 0; k < A_LEN(mos[j].gate); k++) {
+					A_NEXT(mos[i].gate) = mos[j].gate[k];
+					A_INC(mos[i].gate);
+				}
+				mos[i].drain = mos[j].drain;
+				A_DELETE(mos,j,1);
+			} else if (mos[i].source == mos[j].drain and task->nets[mos[i].source].ports == 2) {
+				A_NEWP(mos[j].gate, act_gate_t, A_LEN(mos[i].gate));
+				for (int k = 0; k < A_LEN(mos[i].gate); k++) {
+					A_NEXT(mos[j].gate) = mos[i].gate[k];
+					A_INC(mos[j].gate);
+				}
+				A_ASSIGN(mos[i].gate, mos[j].gate);
+				mos[i].source = mos[j].source;
+				A_DELETE(mos,j,1);
+			}
+		}
+	}
+}
+
+void act_stack::stage_mos(int net)
+{
+	if (ovr[net].idx >= 0) {
+		for (int r = A_LEN(col)-1; r >= 0 and col[r].net != net; r--) {
+			// I should only push this edge if this signal needs to be routed over
+			// the cell, and the edge is not already in the graph.
+			// TODO: I need to account for merged source/drain
+			if (ovr[col[r].net].ports > 1
+				and not layer.has_edge(col[r].net, net)) {
+				layer.push_edge(col[r].net, net);
+			}
+		}
+	}
+
+	A_NEW(col, act_col_t);
+	new (&A_NEXT(col)) act_col_t(0, net, ovr[net].idx+1);
+	A_INC(col);
+}
+
+void act_stack::stage_stack(int sel, int flip)
+{
+	if (not flip) {
+		if (mos[sel].source != col[A_LEN(col)-1].net) {
+			stage_mos(mos[sel].source);
+		} else {
+			// TODO: I have to decrement this if it is unstaged
+			ovr[mos[sel].source].idx += 1;
+		}
+		for (int g = 0; g < A_LEN(mos[sel].gate); g++) {
+			stage_mos(mos[sel].gate[g].net);
+		}
+		stage_mos(mos[sel].drain);
+	} else {
+		if (mos[sel].drain != col[A_LEN(col)-1].net) {
+			stage_mos(mos[sel].drain);
+		} else {
+			// TODO: I have to decrement this if it is unstaged
+			ovr[mos[sel].drain].idx += 1;
+		}
+		for (int g = A_LEN(mos[sel].gate)-1; g >= 0; g--) {
+			stage_mos(mos[sel].gate[g].net);
+		}
+		stage_mos(mos[sel].source);
+	}
+}
+
 layout_task::layout_task()
 {
-	A_INIT(pmos);
-	A_INIT(nmos);
 	A_INIT(nets);
 }
 
 layout_task::~layout_task()
 {
-	A_FREE(pmos);
-	A_FREE(nmos);
 	A_FREE(nets);
 }
 
 void ActLayoutPass::collect_stacks(layout_task *task)
 {
-	A_DECL(unsigned int, count);
-	A_NEWP(count, unsigned int, A_LEN(task->nets));
-	
+	for (int m = 0; m < 2; m++) {
+		task->stack[m].count_ports();
+	}
+
 	for (int i = 0; i < A_LEN(task->nets); i++) {
-		A_NEXT(count) = 0;
-		A_INC(count);
-	}
-
-	for (int i = 0; i < A_LEN(task->pmos); i++) {
-		count[task->pmos[i].source] += 1;
-		count[task->pmos[i].drain] += 1;
-	}
-
-	for (int i = 0; i < A_LEN(task->nmos); i++) {
-		printf("%d,%d/%d\n", task->nmos[i].source, task->nmos[i].drain, A_LEN(count));
-		count[task->nmos[i].source] += 1;
-		count[task->nmos[i].drain] += 1;
-	}
-
-	for (int i = 0; i < A_LEN(task->pmos); i++) {
-		for (int j = A_LEN(task->pmos)-1; j > i; j--) {
-			if (task->pmos[i].drain == task->pmos[j].source and count[task->pmos[i].drain] == 2) {
-				A_NEWP(task->pmos[i].gate, act_gate_t, A_LEN(task->pmos[j].gate));
-				for (int k = 0; k < A_LEN(task->pmos[j].gate); k++) {
-					A_NEXT(task->pmos[i].gate) = task->pmos[j].gate[k];
-					A_INC(task->pmos[i].gate);
-				}
-				task->pmos[i].drain = task->pmos[j].drain;
-				A_DELETE(task->pmos,j);
-			} else if (task->pmos[i].source == task->pmos[j].drain and count[task->pmos[i].source] == 2) {
-				A_NEWP(task->pmos[j].gate, act_gate_t, A_LEN(task->pmos[i].gate));
-				for (int k = 0; k < A_LEN(task->pmos[i].gate); k++) {
-					A_NEXT(task->pmos[j].gate) = task->pmos[i].gate[k];
-					A_INC(task->pmos[j].gate);
-				}
-				A_ASSIGN(task->pmos[i].gate, task->pmos[j].gate);
-				task->pmos[i].source = task->pmos[j].source;
-				A_DELETE(task->pmos,j);
-			}
+		for (int m = 0; m < 2; m++) {
+			task->nets[i].ports += task->stack[m].ovr[i].ports;
 		}
 	}
 
-	for (int i = 0; i < A_LEN(task->nmos); i++) {
-		for (int j = A_LEN(task->nmos)-1; j > i; j--) {
-			if (task->nmos[i].drain == task->nmos[j].source and count[task->nmos[i].drain] == 2) {
-				A_NEWP(task->nmos[i].gate, act_gate_t, A_LEN(task->nmos[j].gate));
-				for (int k = 0; k < A_LEN(task->nmos[j].gate); k++) {
-					A_NEXT(task->nmos[i].gate) = task->nmos[j].gate[k];
-					A_INC(task->nmos[i].gate);
+	for (int m = 0; m < 2; m++) {
+		task->stack[m].collect(task);
+	}
+}
+
+void compute_stack_order(layout_task *task)
+{
+	int i = 0, j = 0;
+	while (i < A_LEN(task->stack[0].mos) and j < A_LEN(task->stack[1].mos)) {
+		// Alternate picking PMOS/NMOS stacks
+		// Pick the stack that minimizes:
+		//   - The number of color assignments in the over-the-cell routing problems
+		//   - The number of edges introduced into the over-the-cell routing problems
+		//   - The total expected horizontal distance between nets connected between the nmos and pmos stacks
+		
+		// Pick the next NMOS stack
+		unsigned int sel;
+		unsigned int flip;
+		unsigned int cost = 0;
+
+		for (int k = 0; k < A_LEN(task->stack[0].mos); k++) {
+			if (not task->stack[0].mos[k].selected) {
+				for (int f = 0; f < 2; f++) {
+					unsigned int next = 0;
+					
+					// compute the cost of selecting this stack
+					task->stack[0].stage_stack(k, f);
+					
+					next += task->stack[0].layer.stash_cost();
+
+					if (cost == 0 or next < cost) {
+						sel = k;
+						flip = f;
+						cost = next;
+						task->stack[0].stash();
+					} else {
+						task->stack[0].clear();
+					}
 				}
-				task->nmos[i].drain = task->nmos[j].drain;
-				A_DELETE(task->nmos,j);
-			} else if (task->nmos[i].source == task->nmos[j].drain and count[task->nmos[i].source] == 2) {
-				A_NEWP(task->nmos[j].gate, act_gate_t, A_LEN(task->nmos[i].gate));
-				for (int k = 0; k < A_LEN(task->nmos[i].gate); k++) {
-					A_NEXT(task->nmos[j].gate) = task->nmos[i].gate[k];
-					A_INC(task->nmos[j].gate);
-				}
-				A_ASSIGN(task->nmos[i].gate, task->nmos[j].gate);
-				task->nmos[i].source = task->nmos[j].source;
-				A_DELETE(task->nmos,j);
 			}
 		}
+
+		task->stack[0].commit();
+		A_NEW(task->stack[0].sel, act_dev_sel_t);
+		A_NEXT(task->stack[0].sel) = act_dev_sel_t(sel, flip);
+		A_INC(task->stack[0].sel); 
+		task->stack[0].mos[sel].selected = 1;
 	}
+}
+
+void compute_channel_routes(layout_task *task)
+{
 }
 
 void ActLayoutPass::process_cell(Process *p)
@@ -198,6 +387,8 @@ void ActLayoutPass::process_cell(Process *p)
 		A_NEXT(task.nets) = net_t();
 		A_INC(task.nets);
 	}
+	task.stack[0].init(max_net_id);
+	task.stack[1].init(max_net_id);
 
 	printf("max_net_id: %d\n", max_net_id);
 
@@ -248,15 +439,9 @@ void ActLayoutPass::process_cell(Process *p)
 						w = e->w;
 					}
 
-					if (e->type == 0) {
-						A_NEW(task.nmos, act_dev_t);
-						new (&A_NEXT(task.nmos)) act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
-						A_INC(task.nmos);
-					} else {
-						A_NEW(task.pmos, act_dev_t);
-						new (&A_NEXT(task.pmos)) act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
-						A_INC(task.pmos);
-					}
+					A_NEW(task.stack[e->type].mos, act_dev_t);
+					new (&A_NEXT(task.stack[e->type].mos)) act_dev_t(e->g->i, e->a->i, e->b->i, e->bulk->i, w, l);
+					A_INC(task.stack[e->type].mos);
 				}
 			}
 		}
@@ -290,19 +475,8 @@ void ActLayoutPass::process_cell(Process *p)
 		}
 	}
 
-	for (int i = 0; i < A_LEN(task.pmos); i++) {
-		printf("pmos b:%d s:%d\n", task.pmos[i].bulk, task.pmos[i].source);
-		for (int j = 0; j < A_LEN(task.pmos[i].gate); j++)
-			printf("  g:%d w:%d l:%d\n", task.pmos[i].gate[j].net, task.pmos[i].gate[j].width, task.pmos[i].gate[j].length);
-		printf("  d:%d\n", task.pmos[i].drain);
-	}
-
-	for (int i = 0; i < A_LEN(task.nmos); i++) {
-		printf("nmos b:%d s:%d\n", task.nmos[i].bulk, task.nmos[i].source);
-		for (int j = 0; j < A_LEN(task.nmos[i].gate); j++)
-			printf("  g:%d w:%d l:%d\n", task.nmos[i].gate[j].net, task.nmos[i].gate[j].width, task.nmos[i].gate[j].length);
-		printf("  d:%d\n", task.nmos[i].drain);
-	}
+	task.stack[0].print("nmos");
+	task.stack[1].print("pmos");
 }
 
 void *ActLayoutPass::local_op (Process *p, int mode)
