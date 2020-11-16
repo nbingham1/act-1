@@ -28,6 +28,7 @@ USEOBJS=booleanize/$(EXT)/booleanize.o \
 	netgen/$(EXT)/emit.o \
 	flatten/$(EXT)/flatten.o \
 	cells/$(EXT)/cells.o \
+	layout/$(EXT)/color_graph.o \
 	layout/$(EXT)/layout.o \
 	state/$(EXT)/statepass.o \
 	sizing/$(EXT)/sizing.o
