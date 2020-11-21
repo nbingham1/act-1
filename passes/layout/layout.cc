@@ -111,14 +111,12 @@ act_col::act_col()
 {
 	this->pos = 0;
 	this->net = 0;
-	this->idx = 0;
 }
 
-act_col::act_col(unsigned int pos, unsigned int net, unsigned int idx)
+act_col::act_col(unsigned int pos, unsigned int net)
 {
 	this->pos = pos;
 	this->net = net;
-	this->idx = idx;
 }
 
 act_col::~act_col()
@@ -128,8 +126,10 @@ act_col::~act_col()
 
 act_ovr::act_ovr()
 {
-	ports = 0;
-	idx = -1;
+	gates = 0;
+	links = 0;
+	gate_idx = -1;
+	link_idx = -1;
 }
 
 act_ovr::~act_ovr()
@@ -166,27 +166,76 @@ void act_stack::init(unsigned int nets)
 
 void act_stack::stash()
 {
+	//printf("STASH\n");
+	if (stage[1] < A_LEN(col)) {
+		ovr[mos[idx[1]].source].link_idx -= 1;
+		ovr[mos[idx[1]].drain].link_idx -= 1;
+		for (int i = 0; i < A_LEN(mos[idx[1]].gate); i++) {
+			ovr[mos[idx[1]].gate[i].net].gate_idx -= 1;
+		}
+	}
+
 	A_DELETE(col, stage[0], stage[1] - stage[0]);
 	stage[1] = A_LEN(col);
 	layer.stash();
+	idx[0] = idx[1];
+	flip[0] = flip[1];
 }
 
 void act_stack::commit()
 {
+	//printf("COMMIT\n");
+	if (stage[1] < A_LEN(col)) {
+		ovr[mos[idx[1]].source].link_idx -= 1;
+		ovr[mos[idx[1]].drain].link_idx -= 1;
+		for (int i = 0; i < A_LEN(mos[idx[1]].gate); i++) {
+			ovr[mos[idx[1]].gate[i].net].gate_idx -= 1;
+		}
+	}
+
+	if (stage[0] < stage[1]) {
+		ovr[mos[idx[0]].source].link_idx += 1;
+		ovr[mos[idx[0]].drain].link_idx += 1;
+		for (int i = 0; i < A_LEN(mos[idx[0]].gate); i++) {
+			ovr[mos[idx[0]].gate[i].net].gate_idx += 1;
+		}
+	}
+
 	A_DELETE(col, stage[1], A_LEN(col) - stage[1]);
 	stage[0] = A_LEN(col);
 	stage[1] = A_LEN(col);
 	layer.commit();
+	A_NEW(sel, act_dev_sel_t);
+	A_NEXT(sel) = act_dev_sel_t(idx[0], flip[0]);
+	A_INC(sel); 
+	mos[idx[0]].selected = 1;
 }
 
 void act_stack::clear()
 {
+	//printf("CLEAR\n");
+	if (stage[1] < A_LEN(col)) {
+		ovr[mos[idx[1]].source].link_idx -= 1;
+		ovr[mos[idx[1]].drain].link_idx -= 1;
+		for (int i = 0; i < A_LEN(mos[idx[1]].gate); i++) {
+			ovr[mos[idx[1]].gate[i].net].gate_idx -= 1;
+		}
+	}
+
 	A_LEN(col) = stage[1];
 	layer.clear();
 }
 
 void act_stack::reset()
 {
+	if (stage[1] < A_LEN(col)) {
+		ovr[mos[idx[1]].source].link_idx -= 1;
+		ovr[mos[idx[1]].drain].link_idx -= 1;
+		for (int i = 0; i < A_LEN(mos[idx[1]].gate); i++) {
+			ovr[mos[idx[1]].gate[i].net].gate_idx -= 1;
+		}
+	}
+
 	A_LEN(col) = stage[0];
 	stage[1] = stage[0];
 	layer.reset();
@@ -214,15 +263,19 @@ void act_stack::print(const char *dev)
 			printf("  s:%d\n", mos[sel[i].idx].source);
 		}
 	}
+
+	for (int i = 0; i < A_LEN(col); i++) {
+		printf("%d: net:%d layer:%d\n", i, col[i].net, layer.color[col[i].net]);
+	}
 }
 
 void act_stack::count_ports()
 {
 	for (int i = 0; i < A_LEN(mos); i++) {
-		ovr[mos[i].source].ports += 1;
-		ovr[mos[i].drain].ports += 1;
+		ovr[mos[i].source].links+= 1;
+		ovr[mos[i].drain].links += 1;
 		for (int j = 0; j < A_LEN(mos[i].gate); j++) {
-			ovr[mos[i].gate[j].net].ports += 1;
+			ovr[mos[i].gate[j].net].gates += 1;
 		}
 	}
 }
@@ -253,50 +306,76 @@ void act_stack::collect(layout_task *task)
 	}
 }
 
-void act_stack::stage_mos(int net)
+void act_stack::stage_col(int net, bool is_gate)
 {
-	if (ovr[net].idx >= 0) {
+	//printf("Staging MOS %d: %d,%d\n", net, ovr[net].link_idx, ovr[net].gate_idx);
+	if (ovr[net].link_idx >= 0 or ovr[net].gate_idx >= 0) {
+		//printf("col[%d] = %d\n", A_LEN(col)-1, col[A_LEN(col)-1].net);
 		for (int r = A_LEN(col)-1; r >= 0 and col[r].net != net; r--) {
 			// I should only push this edge if this signal needs to be routed over
 			// the cell, and the edge is not already in the graph.
 			// TODO: I need to account for merged source/drain
-			if (ovr[col[r].net].ports > 1
+			//printf("check %d -> %d: ports:%d has:%d\n", col[r].net, net, ovr[col[r].net].gates + ovr[col[r].net].links, layer.has_edge(col[r].net, net));
+			if (ovr[col[r].net].gates + ovr[col[r].net].links > 1
 				and not layer.has_edge(col[r].net, net)) {
 				layer.push_edge(col[r].net, net);
 			}
 		}
 	}
 
+	if (is_gate) {
+		ovr[net].gate_idx += 1;
+	} else {
+		ovr[net].link_idx += 1;
+	}
+
 	A_NEW(col, act_col_t);
-	new (&A_NEXT(col)) act_col_t(0, net, ovr[net].idx+1);
+	new (&A_NEXT(col)) act_col_t(0, net);
 	A_INC(col);
 }
 
-void act_stack::stage_stack(int sel, int flip)
+int act_stack::stage_stack(int sel, int flip)
 {
+	//printf("Staging Stack %d:%d\n", sel, flip);
+	int cost = 0;
+	this->idx[1] = sel;
+	this->flip[1] = flip;
 	if (not flip) {
-		if (A_LEN(col) > 0 and mos[sel].source != col[A_LEN(col)-1].net) {
-			stage_mos(mos[sel].source);
+		if (stage[0] == 0 or mos[sel].source != col[stage[0]-1].net) {
+			stage_col(mos[sel].source, false);
+			if (stage[0] > 0) {
+				cost += 1;
+			}
+			if (ovr[mos[sel].source].links - ovr[mos[sel].source].link_idx != 1) {
+				cost += 1;
+			}
 		} else {
 			// TODO: I have to decrement this if it is unstaged
-			ovr[mos[sel].source].idx += 1;
+			ovr[mos[sel].source].link_idx += 1;
 		}
 		for (int g = 0; g < A_LEN(mos[sel].gate); g++) {
-			stage_mos(mos[sel].gate[g].net);
+			stage_col(mos[sel].gate[g].net, true);
 		}
-		stage_mos(mos[sel].drain);
+		stage_col(mos[sel].drain, false);
 	} else {
-		if (A_LEN(col) > 0 and mos[sel].drain != col[A_LEN(col)-1].net) {
-			stage_mos(mos[sel].drain);
+		if (stage[0] == 0 or mos[sel].drain != col[stage[0]-1].net) {
+			stage_col(mos[sel].drain, false);
+			if (stage[0] > 0) {
+				cost += 1;
+			}
+			if (ovr[mos[sel].drain].links - ovr[mos[sel].drain].link_idx != 1) {
+				cost += 1;
+			}
 		} else {
 			// TODO: I have to decrement this if it is unstaged
-			ovr[mos[sel].drain].idx += 1;
+			ovr[mos[sel].drain].link_idx += 1;
 		}
 		for (int g = A_LEN(mos[sel].gate)-1; g >= 0; g--) {
-			stage_mos(mos[sel].gate[g].net);
+			stage_col(mos[sel].gate[g].net, true);
 		}
-		stage_mos(mos[sel].source);
+		stage_col(mos[sel].source, false);
 	}
+	return cost;
 }
 
 layout_task::layout_task()
@@ -317,7 +396,7 @@ void ActLayoutPass::collect_stacks(layout_task *task)
 
 	for (int i = 0; i < A_LEN(task->nets); i++) {
 		for (int m = 0; m < 2; m++) {
-			task->nets[i].ports += task->stack[m].ovr[i].ports;
+			task->nets[i].ports += task->stack[m].ovr[i].gates + task->stack[m].ovr[i].links;
 		}
 	}
 
@@ -342,37 +421,54 @@ void compute_stack_order(layout_task *task)
 			i = 1;
 		}
 
-		unsigned int sel;
-		unsigned int flip;
-		unsigned int cost = 0;
+		int chan_cost = 0;
+		int col_cost = 0;
+		int edge_cost = 0;
 
+		//printf("\n%s\n", i == 0 ? "NMOS" : "PMOS");
+		/*for (int n = 0; n < A_LEN(task->stack[i].ovr); n++) {
+			printf("node %d: gate:%d/%d link:%d/%d\n", n, task->stack[i].ovr[n].gate_idx, task->stack[i].ovr[n].gates, task->stack[i].ovr[n].link_idx, task->stack[i].ovr[n].links);
+		}*/
 		for (int k = 0; k < A_LEN(task->stack[i].mos); k++) {
 			if (not task->stack[i].mos[k].selected) {
 				for (int f = 0; f < 2; f++) {
-					unsigned int next = 0;
+					int chan = 0;
+					int col = 0;
+					int edge = 0;
 					
 					// compute the cost of selecting this stack
-					task->stack[i].stage_stack(k, f);
-					
-					next += task->stack[i].layer.stash_cost();
+					col += task->stack[i].stage_stack(k, f);
+				
+					edge += task->stack[i].layer.stash_cost();
 
-					if (cost == 0 or next < cost) {
-						sel = k;
-						flip = f;
-						cost = next;
+					/*printf("chan:%d/%d col:%d/%d edge:%d/%d\n", chan, chan_cost, col, col_cost, edge, edge_cost);
+
+					for (int n = 0; n < A_LEN(task->stack[i].ovr); n++) {
+						printf("node %d: gate:%d/%d link:%d/%d\n", n, task->stack[i].ovr[n].gate_idx, task->stack[i].ovr[n].gates, task->stack[i].ovr[n].link_idx, task->stack[i].ovr[n].links);
+					}*/
+
+					//if (task->stack[i].stage[0] == task->stack[i].stage[1] or (edge < edge_cost or (edge == edge_cost and col < col_cost))) {
+					if (task->stack[i].stage[0] == task->stack[i].stage[1] or (chan < chan_cost or (chan == chan_cost and (col < col_cost or (col == col_cost and edge < edge_cost))))) {
+						chan_cost = chan;
+						col_cost = col;
+						edge_cost = edge;
 						task->stack[i].stash();
 					} else {
 						task->stack[i].clear();
 					}
+
+					/*for (int n = 0; n < A_LEN(task->stack[i].ovr); n++) {
+						printf("node %d: gate:%d/%d link:%d/%d\n", n, task->stack[i].ovr[n].gate_idx, task->stack[i].ovr[n].gates, task->stack[i].ovr[n].link_idx, task->stack[i].ovr[n].links);
+					}*/
 				}
 			}
 		}
 
 		task->stack[i].commit();
-		A_NEW(task->stack[i].sel, act_dev_sel_t);
-		A_NEXT(task->stack[i].sel) = act_dev_sel_t(sel, flip);
-		A_INC(task->stack[i].sel); 
-		task->stack[i].mos[sel].selected = 1;
+		/*for (int n = 0; n < A_LEN(task->stack[i].ovr); n++) {
+			printf("node %d: gate:%d/%d link:%d/%d\n", n, task->stack[i].ovr[n].gate_idx, task->stack[i].ovr[n].gates, task->stack[i].ovr[n].link_idx, task->stack[i].ovr[n].links);
+		}*/
+
 		j[i] += 1;
 	}
 }
@@ -410,8 +506,7 @@ void ActLayoutPass::process_cell(Process *p)
 	task.stack[0].init(max_net_id);
 	task.stack[1].init(max_net_id);
 
-	printf("max_net_id: %d\n", max_net_id);
-
+	printf("\n\nStarting Layout %d\n", max_net_id);
 	for (node_t *x = n->hd; x; x = x->next) {
 		task.nets[x->i].node = x;
 
@@ -489,9 +584,9 @@ void ActLayoutPass::process_cell(Process *p)
 		if (task.nets[i].node != NULL and task.nets[i].node->v != NULL) {
 			ActId *id = task.nets[i].node->v->v->id->toid();
 			id->sPrint(buf, 1000);
-			printf("%d: \"%s\" pmos:%d nmos:%d\n", i, buf, task.stack[1].layer.color[i], task.stack[0].layer.color[i]);
+			printf("%d: \"%s\" pmos:%d,%d nmos:%d,%d\n", i, buf, task.stack[1].ovr[i].links, task.stack[1].ovr[i].gates, task.stack[0].ovr[i].links, task.stack[0].ovr[i].gates);
 		} else {
-			printf("%d: \"\" pmos:%d nmos:%d\n", i, task.stack[1].layer.color[i], task.stack[0].layer.color[i]);
+			printf("%d: \"\" pmos:%d,%d nmos:%d,%d\n", i, task.stack[1].ovr[i].links, task.stack[1].ovr[i].gates, task.stack[0].ovr[i].links, task.stack[0].ovr[i].gates);
 		}
 	}
 

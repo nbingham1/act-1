@@ -104,7 +104,7 @@ typedef struct act_dev_sel
 typedef struct act_col
 {
 	act_col();
-	act_col(unsigned int pos, unsigned int net, unsigned int idx);
+	act_col(unsigned int pos, unsigned int net);
 	~act_col();
 
 	// position in layout of this column (columns aren't uniformly spaced)
@@ -113,9 +113,6 @@ typedef struct act_col
 	// the net connected to this port
 	// this indexes into task->nets or task->stack[i].ovr
 	unsigned int net;
-
-	// the index of this port for this net.
-	unsigned int idx;
 } act_col_t;
 
 typedef struct act_rect
@@ -134,10 +131,12 @@ typedef struct act_ovr
 	~act_ovr();
 
 	// the number of ports this net has within this stack
-	int ports;
+	int gates;
+	int links;
 
 	// the latest port id that was routed
-	int idx;
+	int gate_idx;
+	int link_idx;
 } act_ovr_t;
 
 typedef struct act_stack
@@ -152,6 +151,8 @@ typedef struct act_stack
 	color_graph_t layer;
 
 	unsigned int stage[2];
+	unsigned int idx[2];
+	unsigned int flip[2];
 
 	void init(unsigned int nets);
 
@@ -163,8 +164,8 @@ typedef struct act_stack
 	void print(const char *dev);
 	void count_ports();
 	void collect(layout_task *task);
-	void stage_mos(int net);
-	void stage_stack(int sel, int flip);
+	void stage_col(int net, bool is_gate);
+	int stage_stack(int sel, int flip);
 } act_stack_t;
 
 typedef struct layout_task
