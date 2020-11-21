@@ -18,7 +18,7 @@ typedef struct color_graph
 	~color_graph();
 
 	A_DECL(color_edge_t, edges);
-	A_DECL(unsigned int, color);
+	A_DECL(int, color);
 	unsigned int stage[2];
 
 	void init(unsigned int count = 0);
