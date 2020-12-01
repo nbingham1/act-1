@@ -381,11 +381,51 @@ int act_stack::stage_stack(int sel, int flip)
 layout_task::layout_task()
 {
 	A_INIT(nets);
+	A_INIT(cols);
+	A_INIT(geo);
 }
 
 layout_task::~layout_task()
 {
 	A_FREE(nets);
+	A_FREE(cols);
+	A_FREE(geo);
+}
+
+void layout_task::stash()
+{
+	//printf("STASH\n");
+	A_DELETE(cols, stage[0], stage[1] - stage[0]);
+	stage[1] = A_LEN(cols);
+}
+
+void layout_task::commit()
+{
+	//printf("COMMIT\n");
+	A_DELETE(cols, stage[1], A_LEN(cols) - stage[1]);
+	stage[0] = A_LEN(cols);
+	stage[1] = A_LEN(cols);
+}
+
+void layout_task::clear()
+{
+	//printf("CLEAR\n");
+	A_LEN(cols) = stage[1];
+}
+
+void layout_task::reset()
+{
+	A_LEN(cols) = stage[0];
+	stage[1] = stage[0];
+}
+
+void layout_task::stage_channel()
+{
+	A_NEW(cols, act_route_t);
+	if (A_LEN(cols) <= 1) {
+	} else {
+		//A_NEWP(A_NEXT(cols).assign, int, )
+	}
 }
 
 void ActLayoutPass::collect_stacks(layout_task *task)
