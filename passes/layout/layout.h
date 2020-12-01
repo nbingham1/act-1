@@ -168,6 +168,11 @@ typedef struct act_stack
 	int stage_stack(int sel, int flip);
 } act_stack_t;
 
+typedef struct act_route
+{
+	A_DECL(int, assign);
+} act_route_t;
+
 typedef struct layout_task
 {
 	layout_task();
@@ -176,9 +181,16 @@ typedef struct layout_task
 	act_stack_t stack[2];
 	A_DECL(net_t, nets);
 
-	void stage_section(int psel, int pflip, int nsel, int nflip);
-	
+	A_DECL(act_route_t, cols);
+	unsigned int stage[2];
+
 	A_DECL(act_rect_t, geo);
+	
+	void stash();
+	void commit();
+	void clear();
+	void reset();
+	void stage_channel();
 } layout_task_t;
 
 class ActLayoutPass : public ActPass {
